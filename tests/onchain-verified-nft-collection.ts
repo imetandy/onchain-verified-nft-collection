@@ -9,17 +9,15 @@ import {
   createAssociatedTokenAccountInstruction,
   createInitializeMintInstruction,
   TOKEN_PROGRAM_ID,
-  TOKEN_2022_PROGRAM_ID,
 } from "@solana/spl-token";
 import { assert } from "chai";
-import * as fs from "fs";
+import { Metaplex } from "@metaplex-foundation/js";
 
 describe("onchain-verified-nft-collection", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
   const authority = provider.wallet as anchor.Wallet;
-  console.log("Wallet:", authority.publicKey.toString());
   const program = anchor.workspace.OnchainVerifiedNftCollection as Program<OnchainVerifiedNftCollection>;
 
   // Store collection details for use across tests
@@ -27,14 +25,19 @@ describe("onchain-verified-nft-collection", () => {
   let collectionMetadata: PublicKey;
   let collectionMasterEdition: PublicKey;
   let collectionPda: PublicKey;
+  let collectionTx: string;
+  let mintTx: string;
 
   before(async () => {
-    // Request airdrop for authority if needed
     const balance = await provider.connection.getBalance(authority.publicKey);
-    if (balance < 1_000_000_000) { // Less than 1 SOL
+    if (balance < 1_000_000_000) {
       console.log("Requesting airdrop for authority...");
-      const signature = await provider.connection.requestAirdrop(authority.publicKey, 2_000_000_000); // 2 SOL
-      await provider.connection.confirmTransaction(signature);
+      const signature = await provider.connection.requestAirdrop(authority.publicKey, 2_000_000_000);
+      await provider.connection.confirmTransaction({
+        signature,
+        blockhash: (await provider.connection.getLatestBlockhash()).blockhash,
+        lastValidBlockHeight: (await provider.connection.getLatestBlockhash()).lastValidBlockHeight,
+      });
     }
   });
 
@@ -42,16 +45,15 @@ describe("onchain-verified-nft-collection", () => {
     it("Initializes a collection", async () => {
       // Create collection mint
       collectionMint = await createMint(
-        provider.connection, // Connection
-        authority.payer, // Mint payer
-        authority.publicKey, // Mint authority
-        authority.publicKey, // Freeze authority
-        0, // Decimals, 0 usually for NFTs
+        provider.connection,
+        authority.payer,
+        authority.publicKey,
+        authority.publicKey,
+        0,
         undefined,
         undefined,
         TOKEN_PROGRAM_ID
       );
-      console.log("Collection Mint:", collectionMint.toString());
 
       // Get collection metadata PDA
       [collectionMetadata] = PublicKey.findProgramAddressSync(
@@ -62,7 +64,6 @@ describe("onchain-verified-nft-collection", () => {
         ],
         new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
       );
-      console.log("Collection Metadata:", collectionMetadata.toString());
 
       // Get collection master edition PDA
       [collectionMasterEdition] = PublicKey.findProgramAddressSync(
@@ -74,14 +75,12 @@ describe("onchain-verified-nft-collection", () => {
         ],
         new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
       );
-      console.log("Collection Master Edition:", collectionMasterEdition.toString());
 
       // Get collection PDA
       [collectionPda] = PublicKey.findProgramAddressSync(
         [Buffer.from("collection"), collectionMint.toBuffer()],
         program.programId
       );
-      console.log("Collection PDA:", collectionPda.toString());
 
       // Create collection token account
       const collectionTokenAccount = await getAssociatedTokenAddressSync(
@@ -90,7 +89,6 @@ describe("onchain-verified-nft-collection", () => {
         true,
         TOKEN_PROGRAM_ID
       );
-      console.log("Collection Token Account:", collectionTokenAccount.toString());
 
       // Create the token account if it doesn't exist
       try {
@@ -106,11 +104,10 @@ describe("onchain-verified-nft-collection", () => {
         
         const tx = new Transaction().add(createAtaIx);
         await provider.sendAndConfirm(tx, [authority.payer]);
-        console.log("Created new collection token account");
       }
 
-      // Initialize collection
-      const tx = await program.methods
+      console.log("Initializing collection...");
+      collectionTx = await program.methods
         .initializeCollection(
           "My Collection",
           "MC",
@@ -132,11 +129,12 @@ describe("onchain-verified-nft-collection", () => {
         .signers([authority.payer])
         .rpc();
 
-      console.log("Collection initialization transaction:", tx);
-
-      // Wait for confirmation and add a small delay
-      await provider.connection.confirmTransaction(tx);
-      await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
+      await provider.connection.confirmTransaction({
+        signature: collectionTx,
+        blockhash: (await provider.connection.getLatestBlockhash()).blockhash,
+        lastValidBlockHeight: (await provider.connection.getLatestBlockhash()).lastValidBlockHeight,
+      });
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
       // Verify the collection was initialized correctly
       const collectionAccount = await program.account.collectionState.fetch(collectionPda);
@@ -144,13 +142,13 @@ describe("onchain-verified-nft-collection", () => {
       assert.ok(collectionAccount.mint.equals(collectionMint), "Collection mint should match");
       assert.ok(collectionAccount.metadata.equals(collectionMetadata), "Collection metadata should match");
       assert.ok(collectionAccount.masterEdition.equals(collectionMasterEdition), "Collection master edition should match");
+      console.log("Collection initialized successfully");
     });
 
     it("Mints an NFT and adds it to the collection", async () => {
       // Create NFT mint
       const nftMintKeypair = Keypair.generate();
       const nftMint = nftMintKeypair.publicKey;
-      console.log("NFT Mint:", nftMint.toString());
 
       // Get NFT metadata PDA
       const [nftMetadata] = PublicKey.findProgramAddressSync(
@@ -161,7 +159,6 @@ describe("onchain-verified-nft-collection", () => {
         ],
         new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
       );
-      console.log("NFT Metadata:", nftMetadata.toString());
 
       // Get NFT master edition PDA
       const [nftMasterEdition] = PublicKey.findProgramAddressSync(
@@ -173,7 +170,6 @@ describe("onchain-verified-nft-collection", () => {
         ],
         new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
       );
-      console.log("NFT Master Edition:", nftMasterEdition.toString());
 
       // Create NFT token account
       const nftTokenAccount = await getAssociatedTokenAddressSync(
@@ -182,7 +178,6 @@ describe("onchain-verified-nft-collection", () => {
         true,
         TOKEN_PROGRAM_ID
       );
-      console.log("NFT Token Account:", nftTokenAccount.toString());
 
       // Create the token account if it doesn't exist
       try {
@@ -198,19 +193,17 @@ describe("onchain-verified-nft-collection", () => {
         
         const tx = new Transaction().add(createAtaIx);
         await provider.sendAndConfirm(tx, [authority.payer]);
-        console.log("Created new token account");
       }
 
-      // Create the mint account
+      // Create and initialize the mint account
       const createMintIx = anchor.web3.SystemProgram.createAccount({
         fromPubkey: authority.publicKey,
         newAccountPubkey: nftMint,
-        space: 82, // Size of a mint account
+        space: 82,
         lamports: await provider.connection.getMinimumBalanceForRentExemption(82),
         programId: TOKEN_PROGRAM_ID,
       });
 
-      // Initialize the mint
       const initMintIx = await createInitializeMintInstruction(
         nftMint,
         0,
@@ -219,35 +212,23 @@ describe("onchain-verified-nft-collection", () => {
         TOKEN_PROGRAM_ID
       );
 
-      // Create and send the transaction
       const createMintTx = new Transaction()
         .add(createMintIx)
         .add(initMintIx);
       
       await provider.sendAndConfirm(createMintTx, [nftMintKeypair, authority.payer]);
-      console.log("Created and initialized NFT mint");
 
-      // Define account roles clearly
+      // Define account roles
       const accounts = {
-        // The authority who is minting the NFT
-        authority: authority.publicKey,  // This account will:
-        // 1. Pay for the NFT creation
-        // 2. Own the NFT
-        // 3. Be the authority for minting
-        
-        // Collection accounts
-        collection: collectionPda,  // The collection PDA that contains collection info
-        collectionMint: collectionMint,  // The collection mint
-        collectionMetadata: collectionMetadata,  // The collection metadata
-        collectionMasterEdition: collectionMasterEdition,  // The collection master edition
-        
-        // NFT accounts
-        mint: nftMint,  // The new NFT mint being created
-        metadata: nftMetadata,  // The metadata account for the NFT
-        masterEdition: nftMasterEdition,  // The master edition account for the NFT
-        nftTokenAccount: nftTokenAccount,  // The token account that will hold the NFT
-        
-        // Program accounts
+        authority: authority.publicKey,
+        collection: collectionPda,
+        collectionMint: collectionMint,
+        collectionMetadata: collectionMetadata,
+        collectionMasterEdition: collectionMasterEdition,
+        mint: nftMint,
+        metadata: nftMetadata,
+        masterEdition: nftMasterEdition,
+        nftTokenAccount: nftTokenAccount,
         tokenProgram: TOKEN_PROGRAM_ID,
         tokenMetadataProgram: new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"),
         associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -255,25 +236,15 @@ describe("onchain-verified-nft-collection", () => {
         sysvarInstructions: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
       };
 
-      // Verify account relationships before transaction
-      console.log("\n=== Verifying Account Relationships ===");
-      console.log("1. Collection Authority Check:");
+      // Verify collection authority
       const collectionAccount = await program.account.collectionState.fetch(collectionPda);
-      console.log("   Collection Authority in State:", collectionAccount.authority.toString());
-      console.log("   Authority:", accounts.authority.toString());
       assert.ok(
         collectionAccount.authority.equals(accounts.authority),
         "Collection authority must match authority"
       );
 
-      console.log("\n2. Collection Accounts Check:");
-      console.log("   Collection Mint:", accounts.collectionMint.toString());
-      console.log("   Collection Metadata:", accounts.collectionMetadata.toString());
-      console.log("   Collection Master Edition:", accounts.collectionMasterEdition.toString());
-      console.log("=== End Account Verification ===\n");
-
-      // Mint NFT
-      const mintTx = await program.methods
+      console.log("Minting NFT...");
+      mintTx = await program.methods
         .mintNft(
           "NFT 1",
           "https://arweave.net/your-nft-metadata-uri"
@@ -290,23 +261,43 @@ describe("onchain-verified-nft-collection", () => {
           preflightCommitment: "confirmed"
         });
 
-      console.log("NFT minting transaction:", mintTx);
+      await provider.connection.confirmTransaction({
+        signature: mintTx,
+        blockhash: (await provider.connection.getLatestBlockhash()).blockhash,
+        lastValidBlockHeight: (await provider.connection.getLatestBlockhash()).lastValidBlockHeight,
+      });
+      console.log("NFT minted and added to collection successfully");
 
-      // Wait for confirmation
-      await provider.connection.confirmTransaction(mintTx);
-
-      // Verify NFT collection status
-      console.log("\n=== Verifying NFT Collection Status ===");
-      const nftMetadataAccount = await provider.connection.getAccountInfo(nftMetadata);
-      if (!nftMetadataAccount) {
-        throw new Error("NFT metadata account not found");
-      }
-
-      console.log("NFT Mint:", nftMint.toString());
-      console.log("Collection Mint:", collectionMint.toString());
-      console.log("Collection Metadata:", collectionMetadata.toString());
-      console.log("Collection Master Edition:", collectionMasterEdition.toString());
-      console.log("=== End NFT Collection Verification ===\n");
+      // Fetch on-chain data
+      const collectionMetadataData = await provider.connection.getAccountInfo(collectionMetadata);
+      const nftMetadataData = await provider.connection.getAccountInfo(nftMetadata);
+      
+      // Initialize Metaplex
+      const metaplex = new Metaplex(provider.connection);
+      
+      // Get NFT metadata
+      const nftMetadataAccount = await metaplex.nfts().findByMint({ mintAddress: nftMint });
+      const collectionInfo = nftMetadataAccount.collection;
+      
+      // Display NFT relationship with on-chain data
+      console.log("\n=== NFT Collection Relationship ===");
+      console.log("Collection NFT:");
+      console.log("├─ Mint:      " + collectionMint.toString());
+      console.log("├─ Metadata:  " + collectionMetadata.toString());
+      console.log("├─ Edition:   " + collectionMasterEdition.toString());
+      console.log("└─ Size:      " + (collectionMetadataData?.data.length || 0) + " bytes");
+      console.log("\nMinted NFT:");
+      console.log("├─ Mint:      " + nftMint.toString());
+      console.log("├─ Metadata:  " + nftMetadata.toString());
+      console.log("├─ Edition:   " + nftMasterEdition.toString());
+      console.log("├─ Size:      " + (nftMetadataData?.data.length || 0) + " bytes");
+      console.log("└─ Collection:");
+      console.log("   ├─ Verified: " + (collectionInfo?.verified ? "Yes" : "No"));
+      console.log("   └─ Key:      " + (collectionInfo?.address.toString() ?? "None"));
+      console.log("\nTransaction Links:");
+      console.log("├─ Collection Init: https://solscan.io/tx/" + collectionTx + "?cluster=devnet");
+      console.log("└─ NFT Mint:        https://solscan.io/tx/" + mintTx + "?cluster=devnet");
+      console.log("================================\n");
     });
   });
 }); 

@@ -21,13 +21,14 @@ pub mod onchain_verified_nft_collection {
         symbol: String,
         uri: String,
     ) -> Result<()> {
+        msg!("Initializing collection: {}", name);
+        
         let collection = &mut ctx.accounts.collection;
         collection.authority = ctx.accounts.authority.key();
         collection.mint = ctx.accounts.collection_mint.key();
         collection.metadata = ctx.accounts.collection_metadata.key();
         collection.master_edition = ctx.accounts.collection_master_edition.key();
 
-        // Create the collection NFT
         let token_metadata_program = ctx.accounts.token_metadata_program.to_account_info();
         let collection_metadata = ctx.accounts.collection_metadata.to_account_info();
         let collection_mint = ctx.accounts.collection_mint.to_account_info();
@@ -38,7 +39,7 @@ pub mod onchain_verified_nft_collection {
         let collection_token_account = ctx.accounts.collection_token_account.to_account_info();
         let associated_token_program = ctx.accounts.associated_token_program.to_account_info();
 
-        msg!("Creating collection NFT");
+        msg!("Creating collection NFT metadata");
         let mut create_collection_cpi = CreateV1CpiBuilder::new(&token_metadata_program);
         create_collection_cpi
             .metadata(&collection_metadata)
@@ -60,9 +61,8 @@ pub mod onchain_verified_nft_collection {
             .print_supply(PrintSupply::Zero);
 
         create_collection_cpi.invoke()?;
-        msg!("Collection NFT created");
+        msg!("Collection NFT metadata created successfully");
 
-        // Mint the collection NFT
         msg!("Minting collection NFT");
         let mut mint_collection_cpi = MintV1CpiBuilder::new(&token_metadata_program);
         mint_collection_cpi
@@ -80,7 +80,7 @@ pub mod onchain_verified_nft_collection {
             .amount(1);
 
         mint_collection_cpi.invoke()?;
-        msg!("Collection NFT minted");
+        msg!("Collection NFT minted successfully");
 
         Ok(())
     }
@@ -90,6 +90,7 @@ pub mod onchain_verified_nft_collection {
         name: String,
         uri: String,
     ) -> Result<()> {
+        msg!("Minting new NFT: {}", name);
 
         let token_metadata_program = ctx.accounts.token_metadata_program.to_account_info();
         let metadata = ctx.accounts.metadata.to_account_info();
@@ -124,10 +125,10 @@ pub mod onchain_verified_nft_collection {
             });
 
         create_cpi.invoke()?;
-        msg!("NFT created");
+        msg!("NFT metadata created successfully");
 
-        let mut mint_cpi = MintV1CpiBuilder::new(&token_metadata_program);
         msg!("Minting NFT");
+        let mut mint_cpi = MintV1CpiBuilder::new(&token_metadata_program);
         mint_cpi
             .token(&nft_token_account)
             .token_owner(Some(&authority))
@@ -143,14 +144,9 @@ pub mod onchain_verified_nft_collection {
             .amount(1);
 
         mint_cpi.invoke()?;
-        msg!("Minted NFT");
+        msg!("NFT minted successfully");
 
-        // Now verify the collection
         msg!("Verifying collection");
-        msg!("Collection authority: {}", authority.key());
-        msg!("Update authority: {}", authority.key());
-        msg!("Collection mint: {}", ctx.accounts.collection_mint.key());
-        
         let mut verify_cpi = SetAndVerifyCollectionCpiBuilder::new(&token_metadata_program);
         verify_cpi
             .metadata(&metadata)
@@ -163,7 +159,7 @@ pub mod onchain_verified_nft_collection {
             .collection_authority_record(None);
             
         verify_cpi.invoke()?;
-        msg!("Collection verified");
+        msg!("Collection verification completed");
 
         Ok(())
     }
